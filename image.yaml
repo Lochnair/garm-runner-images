@@ -122,14 +122,6 @@ packages:
         - tcpdump
         - nftables
 
-  repositories:
-    - name: sources.list
-      url: |-
-        deb https://archive.ubuntu.com/ubuntu {{ image.release }} main restricted universe multiverse
-        deb https://archive.ubuntu.com/ubuntu {{ image.release }}-updates main restricted universe multiverse
-        deb https://security.ubuntu.com/ubuntu {{ image.release }}-security main restricted universe multiverse
-      architectures:
-        - amd64
 
 actions:
   - trigger: post-packages
