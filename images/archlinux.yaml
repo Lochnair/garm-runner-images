@@ -1,0 +1,136 @@
+image:
+  name: garm-runner-archlinux-{{ image.architecture }}-{{ image.serial }}
+  distribution: archlinux
+  description: GARM runner image based on Arch Linux
+  architecture: x86_64
+  variant: cloud
+
+source:
+  downloader: archlinux-http
+  url: https://archive.archlinux.org/iso/
+  skip_verification: true
+
+files:
+  - path: /etc/hostname
+    generator: hostname
+  - path: /etc/hosts
+    generator: hosts
+  - path: /etc/machine-id
+    generator: dump
+    content: uninitialized
+  - path: /var/lib/dbus/machine-id
+    generator: remove
+  - path: /etc/systemd/network/eth0.network
+    generator: dump
+    content: |-
+      [Match]
+      Name=eth0
+
+      [Network]
+      DHCP=ipv4
+
+      [DHCPv4]
+      UseDomains=true
+      UseMTU=true
+
+      [DHCP]
+      ClientIdentifier=mac
+  - name: meta-data
+    generator: cloud-init
+  - name: network-config
+    generator: cloud-init
+  - name: user-data
+    generator: cloud-init
+  - name: vendor-data
+    generator: cloud-init
+
+packages:
+  manager: pacman
+  update: true
+  cleanup: true
+  sets:
+    - action: install
+      packages:
+        - base
+        - cloud-init
+        - systemd
+        - systemd-sysvcompat
+        - sudo
+        - curl
+        - tar
+        - base-devel
+        - cmake
+        - ninja
+        - pkgconf
+        - autoconf
+        - automake
+        - libtool
+        - m4
+        - bison
+        - flex
+        - clang
+        - lld
+        - llvm
+        - git
+        - git-lfs
+        - openssh
+        - wget
+        - aria2
+        - jq
+        - file
+        - rsync
+        - unzip
+        - zip
+        - xz
+        - zstd
+        - bzip2
+        - ca-certificates
+        - gnupg
+        - python
+        - python-pip
+        - python-virtualenv
+        - python-pipx
+        - nodejs
+        - npm
+        - go
+        - rust
+        - docker
+        - docker-buildx
+        - docker-compose
+        - shellcheck
+        - openssl
+        - libffi
+        - zlib
+        - sqlite
+        - kmod
+        - iproute2
+        - iputils
+        - bind
+        - openbsd-netcat
+        - socat
+        - ethtool
+        - tcpdump
+        - nftables
+
+actions:
+  - trigger: post-unpack
+    action: |-
+      #!/bin/sh
+      set -eu
+      cat > /etc/pacman.d/mirrorlist <<'EOF'
+      Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch
+      Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch
+      EOF
+
+  - trigger: post-packages
+    action: |-
+      #!/bin/sh
+      set -eu
+      echo 'en_US.UTF-8 UTF-8' > /etc/locale.gen
+      locale-gen
+      echo 'LANG=en_US.UTF-8' > /etc/locale.conf
+      systemctl enable systemd-networkd.service
+      systemctl enable systemd-resolved.service
+      systemctl enable docker.service
+      cloud-init clean --logs --machine-id
+      rm -rf /var/cache/pacman/pkg/*
