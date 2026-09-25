@@ -23,7 +23,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: garm-runner-images
+  group: garm-runner-image
   cancel-in-progress: false
 
 jobs:
@@ -45,25 +45,59 @@ jobs:
         run: |
           set -euo pipefail
 
-          jq -e '
-            .schema_version == 1 and
-            (.images | type == "array" and length > 0) and
-            ([.images[].id] | length == (unique | length)) and
-            ([.images[].asset] | length == (unique | length)) and
-            ([.images[].alias] | length == (unique | length)) and
-            all(.images[];
-              (.id | type == "string" and length > 0) and
-              (.definition | type == "string" and length > 0) and
-              (.asset | type == "string" and endswith(".tar.xz")) and
-              (.alias | type == "string" and length > 0)
-            )
-          ' images/catalog.json >/dev/null
+          matrix="$(
+            python3 - <<'PY'
+          import json
+          import re
+          from pathlib import Path
 
-          while IFS= read -r definition; do
-            test -f "$definition"
-          done < <(jq -r '.images[].definition' images/catalog.json)
+          catalog_path = Path("images/catalog.json")
+          catalog = json.loads(catalog_path.read_text())
 
-          echo "matrix=$(jq -c '{include: .images}' images/catalog.json)" >> "$GITHUB_OUTPUT"
+          if catalog.get("schema_version") != 1:
+              raise SystemExit("unsupported catalog schema")
+
+          images = catalog.get("images")
+          if not isinstance(images, list) or not images:
+              raise SystemExit("catalog contains no images")
+
+          safe_name = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+          seen_ids = set()
+          seen_assets = set()
+          reserved_aliases = set()
+
+          for image in images:
+              image_id = image.get("id")
+              definition = image.get("definition")
+              asset = image.get("asset")
+              alias = image.get("alias")
+
+              if not all(isinstance(value, str) and value for value in (image_id, definition, asset, alias)):
+                  raise SystemExit("catalog contains an invalid image entry")
+              if not safe_name.fullmatch(image_id):
+                  raise SystemExit(f"unsafe image id: {image_id!r}")
+              if not safe_name.fullmatch(asset) or Path(asset).name != asset or not asset.endswith(".tar.xz"):
+                  raise SystemExit(f"unsafe image asset: {asset!r}")
+              if not safe_name.fullmatch(alias):
+                  raise SystemExit(f"unsafe image alias: {alias!r}")
+              if image_id in seen_ids or asset in seen_assets:
+                  raise SystemExit("catalog contains duplicate ids or assets")
+              if not Path(definition).is_file():
+                  raise SystemExit(f"missing image definition: {definition}")
+
+              aliases = (alias, f"{alias}-previous", f"{alias}-staging")
+              if any(candidate in reserved_aliases for candidate in aliases):
+                  raise SystemExit(f"catalog alias namespace collision for {alias}")
+
+              seen_ids.add(image_id)
+              seen_assets.add(asset)
+              reserved_aliases.update(aliases)
+
+          print(json.dumps({"include": images}, separators=(",", ":")))
+          PY
+          )"
+
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build ${{ matrix.id }}
@@ -180,6 +214,11 @@ jobs:
 
           tag="runner-images-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
-          gh release create "$tag"             dist/*             --target "$GITHUB_SHA"             --title "GARM runner images $(date -u '+%Y-%m-%d')"             --notes "Incus runner image set built from commit $GITHUB_SHA."             --draft
+          gh release create "$tag" \
+            dist/* \
+            --target "$GITHUB_SHA" \
+            --title "GARM runner images $(date -u '+%Y-%m-%d')" \
+            --notes "Incus runner image set built from commit $GITHUB_SHA." \
+            --draft
 
           gh release edit "$tag" --draft=false --latest
