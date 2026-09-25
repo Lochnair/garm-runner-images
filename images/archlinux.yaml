@@ -132,6 +132,7 @@ actions:
       systemctl enable systemd-networkd.service
       systemctl enable systemd-resolved.service
       systemctl enable docker.service
+      ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
       systemctl enable cloud-init-main.service
       systemctl enable cloud-final.service
       cloud-init clean --logs --machine-id
