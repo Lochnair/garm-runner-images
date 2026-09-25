@@ -4,12 +4,16 @@ on:
   pull_request:
     paths:
       - image.yaml
+      - scripts/**
+      - systemd/**
       - .github/workflows/build.yml
   push:
     branches:
       - main
     paths:
       - image.yaml
+      - scripts/**
+      - systemd/**
       - .github/workflows/build.yml
   schedule:
     - cron: "17 3 * * 0"
@@ -31,6 +35,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Validate updater script
+        run: bash -n scripts/update-incus-image.sh
 
       - name: Install distrobuilder
         run: |
