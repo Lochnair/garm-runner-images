@@ -92,9 +92,125 @@ update_image() {
   if [[ -f "$state_file" ]]; then
     local state_sha=""
     local state_alias=""
-    IFS=$'\t' read -r state_sha state_alias < "$state_file" || true
+    local state_project=""
+    IFS=
+      echo "$image_id is already current ($remote_sha)"
+      return
+    fi
+  fi
 
-    if [[ "$state_sha" == "$remote_sha" && "$state_alias" == "$current_alias" ]]; then
+  curl -fL --retry 5 --retry-delay 2 "$image_url" -o "$image_file"
+
+  local actual_sha
+  actual_sha="$(sha256sum "$image_file" | awk '{print $1}')"
+  if [[ "${actual_sha,,}" != "$remote_sha" ]]; then
+    echo "Checksum mismatch for $image_url" >&2
+    echo "Expected: $remote_sha" >&2
+    echo "Actual:   $actual_sha" >&2
+    return 1
+  fi
+
+  if [[ -n "$(alias_fingerprint "$staging_alias")" ]]; then
+    incus image alias delete --project "$PROJECT" "$staging_alias"
+  fi
+
+  incus image import \
+    --project "$PROJECT" \
+    --alias "$staging_alias" \
+    "$image_file" \
+    user.garm-runner=true \
+    user.garm-runner.image="$image_id" \
+    source.url="$image_url"
+
+  local new_fingerprint
+  local current_fingerprint
+  local previous_fingerprint
+
+  new_fingerprint="$(alias_fingerprint "$staging_alias")"
+  if [[ -z "$new_fingerprint" ]]; then
+    echo "Could not determine imported image fingerprint for $image_id" >&2
+    return 1
+  fi
+
+  current_fingerprint="$(alias_fingerprint "$current_alias")"
+  previous_fingerprint="$(alias_fingerprint "$previous_alias")"
+
+  if [[ "$new_fingerprint" != "$current_fingerprint" ]]; then
+    if [[ -n "$previous_fingerprint" ]]; then
+      incus image alias delete --project "$PROJECT" "$previous_alias"
+    fi
+
+    if [[ -n "$current_fingerprint" ]]; then
+      incus image alias delete --project "$PROJECT" "$current_alias"
+      incus image alias create --project "$PROJECT" "$previous_alias" "$current_fingerprint"
+    fi
+
+    if ! incus image alias create --project "$PROJECT" "$current_alias" "$new_fingerprint"; then
+      if [[ -n "$current_fingerprint" ]]; then
+        incus image alias create --project "$PROJECT" "$current_alias" "$current_fingerprint" || true
+      fi
+      return 1
+    fi
+  fi
+
+  incus image alias delete --project "$PROJECT" "$staging_alias"
+
+  current_fingerprint="$(alias_fingerprint "$current_alias")"
+  previous_fingerprint="$(alias_fingerprint "$previous_alias")"
+
+  local managed_images
+  managed_images="$(
+    incus image list \
+      --project "$PROJECT" \
+      "user.garm-runner.image=$image_id" \
+      --format csv,noheader \
+      --columns f
+  )"
+
+  while IFS= read -r fingerprint; do
+    [[ -z "$fingerprint" ]] && continue
+    [[ "$fingerprint" == "$current_fingerprint" ]] && continue
+    [[ -n "$previous_fingerprint" && "$fingerprint" == "$previous_fingerprint" ]] && continue
+
+    incus image delete --project "$PROJECT" "$fingerprint"
+  done <<< "$managed_images"
+
+  printf '%s\t%s\t%s\n' "$remote_sha" "$current_alias" "$PROJECT" > "$state_file.tmp"
+  mv "$state_file.tmp" "$state_file"
+
+  echo "$image_id now points to $current_fingerprint"
+  if [[ -n "$previous_fingerprint" ]]; then
+    echo "$previous_alias points to $previous_fingerprint"
+  fi
+}
+
+failures=0
+tab="$(printf '\t')"
+
+while IFS="$tab" read -r image_id asset checksum alias; do
+  [[ -z "$image_id" ]] && continue
+
+  set +e
+  (
+    set -e
+    update_image "$image_id" "$asset" "$checksum" "$alias"
+  )
+  status=$?
+  set -e
+
+  if (( status != 0 )); then
+    echo "Failed to update $image_id" >&2
+    failures=$((failures + 1))
+  fi
+done <<< "$manifest_rows"
+
+if (( failures != 0 )); then
+  echo "$failures image update(s) failed" >&2
+  exit 1
+fi
+\t' read -r state_sha state_alias state_project < "$state_file" || true
+
+    if [[ "$state_sha" == "$remote_sha" && "$state_alias" == "$current_alias" && "$state_project" == "$PROJECT" ]]; then
       echo "$image_id is already current ($remote_sha)"
       return
     fi
