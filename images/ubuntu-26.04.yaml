@@ -125,7 +125,9 @@ actions:
       systemctl enable systemd-networkd.service
       systemctl enable systemd-resolved.service
       systemctl enable docker.service
-      ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+      umount -l /etc/resolv.conf || true
+      rm -f /etc/resolv.conf
+      ln -s ../run/systemd/resolve/resolv.conf /etc/resolv.conf
       cloud-init clean --logs --machine-id
       rm -rf /var/lib/apt/lists/*
 
