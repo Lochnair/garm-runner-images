@@ -5,4 +5,5 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+TimeoutStartSec=30min
 ExecStart=/usr/local/sbin/update-garm-runner-image
