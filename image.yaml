@@ -7,14 +7,8 @@ image:
   variant: cloud
 
 source:
-  downloader: debootstrap
-  same_as: gutsy
-  url: https://archive.ubuntu.com/ubuntu
-  components:
-    - main
-    - restricted
-    - universe
-    - multiverse
+  downloader: ubuntu-http
+  url: https://cdimage.ubuntu.com/ubuntu-base
 
 files:
   - path: /etc/hostname
@@ -159,3 +153,6 @@ actions:
 
       cloud-init clean --logs --machine-id
       rm -rf /var/lib/apt/lists/*
+
+mappings:
+  architecture_map: debian
