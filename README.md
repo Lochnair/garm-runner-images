@@ -1,44 +1,42 @@
 # garm-runner-images
 
-Prebuilt Incus container image for the GARM runners on TheBeast.
+Prebuilt Incus container images for the GARM runners on TheBeast.
 
-The image is intentionally treated as a generated artifact rather than a long-lived machine:
+The images are generated artifacts rather than long-lived machines. GitHub Actions rebuilds the full image set every Sunday and whenever an image definition, updater, or workflow changes on `main`. Toolchains are baked into the images so ephemeral GARM runners do not spend their startup time upgrading the OS and reinstalling the same development packages.
 
-- GitHub Actions rebuilds it every Sunday and whenever the image definition changes on `main`.
-- The build starts from Ubuntu Resolute and runs a full package upgrade before installing the runner toolchain.
-- Packages that were previously installed by GARM/cloud-init are baked into the image.
-- GARM can therefore use `disable_updates: true` and avoid doing an `apt upgrade` plus a large package install for every ephemeral runner.
-- Each successful non-PR build is published as its own GitHub release. The `latest` release URL remains stable for TheBeast.
+## Image set
 
-## Image contents
+`images/catalog.json` is the source of truth for the image set, release assets, and stable Incus aliases.
 
-`image.yaml` is the source of truth for the image. It currently includes the general-purpose toolchain used by the Gitea/GARM runners: C/C++, LLVM/Clang, Rust, Go, Node.js, Python, Docker/buildx/Compose, Git, shellcheck and the networking/debugging utilities from the previous runner bootstrap.
+| Gitea label | Image definition | Incus alias |
+| --- | --- | --- |
+| `ubuntu-latest`, `ubuntu-26.04` | `images/ubuntu-26.04.yaml` | `garm-runner-ubuntu-26.04` |
+| `ubuntu-24.04` | `images/ubuntu-24.04.yaml` | `garm-runner-ubuntu-24.04` |
+| `archlinux` | `images/archlinux.yaml` | `garm-runner-archlinux` |
+| `almalinux-10` | `images/almalinux-10.yaml` | `garm-runner-almalinux-10` |
 
-The image includes cloud-init and is built as an Incus **container** image. Nested Docker is expected to be enabled by the Incus project/profile used for GARM.
+Each definition uses distro-native package names while providing the same broad runner capabilities where the distribution supports them: C/C++ build tools, LLVM/Clang, Rust, Go, Node.js, Python, Git, Docker/buildx/Compose, and common networking/debugging tools.
 
-## Published image
+Alpine is intentionally not part of this image set yet. GARM's stock Gitea Linux installer assumes systemd, while a normal Alpine runner uses OpenRC.
 
-Pull requests build and upload the image as a short-lived Actions artifact, but do not publish a release.
+## Published release
 
-Successful non-PR builds first create a **draft** release and upload both files:
+Pull requests build all images and upload short-lived Actions artifacts but do not publish a release.
 
-- `garm-runner-incus.tar.xz`
-- `garm-runner-incus.tar.xz.sha256`
+Successful non-PR builds wait for the complete matrix, generate `manifest.json`, then create a draft release containing the entire image set. The release is published and marked latest only after every image and the manifest have been uploaded successfully.
 
-Only after both uploads succeed is the release published and marked as the latest release. That keeps the stable download URL on the previous known-good pair if a build or upload fails.
-
-The stable download URL is:
+The stable manifest URL is:
 
 ```text
-https://github.com/Lochnair/garm-runner-images/releases/latest/download/garm-runner-incus.tar.xz
+https://github.com/Lochnair/garm-runner-images/releases/latest/download/manifest.json
 ```
+
+The manifest contains the asset name, SHA-256 checksum, and stable Incus alias for every image. The updater consumes this manifest, so adding or removing a distro does not require another local updater configuration.
 
 ## Install the updater on TheBeast
 
-The updater imports a new image only when the published checksum changes, moves the old current image to `garm-runner-previous`, and keeps only the current and previous managed images.
-
 ```bash
-sudo install -m 0755 scripts/update-incus-image.sh /usr/local/sbin/update-garm-runner-image
+sudo install -m 0755 scripts/update-incus-images.sh /usr/local/sbin/update-garm-runner-images
 sudo install -m 0644 systemd/garm-runner-image-update.service /etc/systemd/system/
 sudo install -m 0644 systemd/garm-runner-image-update.timer /etc/systemd/system/
 
@@ -49,46 +47,62 @@ sudo systemctl enable --now garm-runner-image-update.timer
 sudo systemctl start garm-runner-image-update.service
 ```
 
-The defaults match the current Incus setup:
+Defaults:
 
 ```text
-project:        garm-runners
-current alias:  garm-runner-current
-previous alias: garm-runner-previous
+Incus project: garm-runners
+manifest:      GitHub latest release
+state:         /var/lib/garm-runner-images
 ```
 
-They can be overridden with `INCUS_PROJECT`, `CURRENT_ALIAS`, `PREVIOUS_ALIAS`, `STAGING_ALIAS`, `IMAGE_URL`, `CHECKSUM_URL`, or `STATE_DIR`.
+These can be overridden with `INCUS_PROJECT`, `MANIFEST_URL`, `RELEASE_BASE_URL`, or `STATE_DIR`.
 
-Once the first image is imported, point the GARM container pool at the local image alias:
+For each image, the updater:
 
-```text
-garm-runner-current
-```
+1. verifies the downloaded asset against the manifest checksum;
+2. imports it under a staging alias;
+3. rotates the stable alias to `<alias>-previous`;
+4. removes older managed copies for that distro;
+5. records completion only after rotation and cleanup succeed.
 
-Set the pool's Incus provider extra specs to disable boot-time package updates:
+A failed image therefore remains retryable on the next timer run without disturbing images that already completed successfully.
+
+## GARM pools
+
+After the images are imported, point the four GARM pools at their aliases from the table above and set the Incus provider extra specs to disable boot-time package updates:
 
 ```json
 {"disable_updates": true}
 ```
 
-The old `extra_packages` list should be removed from the pool because those packages are now part of the image.
+Remove the old `extra_packages` list because those packages are baked into the images.
+
+The existing single-image aliases from the first version of this repository are not reused. Once the Ubuntu 26.04 pool has been switched to `garm-runner-ubuntu-26.04` and is working, the old `garm-runner-current` / `garm-runner-previous` aliases and their old managed images can be removed manually.
 
 ## Rollback
 
-The updater retains one previous image as `garm-runner-previous`. To roll back:
+Every distro keeps one previous image. For example, to roll Ubuntu 26.04 back:
 
 ```bash
 PROJECT=garm-runners
+CURRENT=garm-runner-ubuntu-26.04
+PREVIOUS="${CURRENT}-previous"
+
 OLD="$(
   incus image alias list --project "$PROJECT" --format csv,noheader --columns af |
-    awk -F, '$1 == "garm-runner-previous" { print $2; exit }'
+    awk -F, -v alias="$PREVIOUS" '$1 == alias { print $2; exit }'
 )"
 
 test -n "$OLD"
-incus image alias delete --project "$PROJECT" garm-runner-current
-incus image alias create --project "$PROJECT" garm-runner-current "$OLD"
+incus image alias delete --project "$PROJECT" "$CURRENT"
+incus image alias create --project "$PROJECT" "$CURRENT" "$OLD"
 ```
 
-A manual rollback is intentionally sticky until a newer weekly image is published. To force the updater to reapply the currently published image, remove `/var/lib/garm-runner-image/sha256` and run the service again.
+The state file makes a manual rollback sticky until a newer image is published. To force the currently published image to be reapplied, remove only that distro's state file, for example:
 
-The updater does not modify GARM itself. GARM remains the only runner lifecycle manager; this repository only provides the local image alias that its Incus pool launches.
+```bash
+sudo rm /var/lib/garm-runner-images/ubuntu-26.04.sha256
+sudo systemctl start garm-runner-image-update.service
+```
+
+GARM remains the only runner lifecycle manager. This repository only builds and maintains the local Incus images that its pools launch.
