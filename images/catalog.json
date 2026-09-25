@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "images": [
+    {
+      "id": "ubuntu-26.04",
+      "definition": "images/ubuntu-26.04.yaml",
+      "asset": "garm-runner-ubuntu-26.04-amd64.tar.xz",
+      "alias": "garm-runner-ubuntu-26.04"
+    },
+    {
+      "id": "ubuntu-24.04",
+      "definition": "images/ubuntu-24.04.yaml",
+      "asset": "garm-runner-ubuntu-24.04-amd64.tar.xz",
+      "alias": "garm-runner-ubuntu-24.04"
+    },
+    {
+      "id": "archlinux",
+      "definition": "images/archlinux.yaml",
+      "asset": "garm-runner-archlinux-amd64.tar.xz",
+      "alias": "garm-runner-archlinux"
+    },
+    {
+      "id": "almalinux-10",
+      "definition": "images/almalinux-10.yaml",
+      "asset": "garm-runner-almalinux-10-amd64.tar.xz",
+      "alias": "garm-runner-almalinux-10"
+    }
+  ]
+}
