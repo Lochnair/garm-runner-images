@@ -132,5 +132,7 @@ actions:
       systemctl enable systemd-networkd.service
       systemctl enable systemd-resolved.service
       systemctl enable docker.service
+      systemctl enable cloud-init-main.service
+      systemctl enable cloud-final.service
       cloud-init clean --logs --machine-id
       rm -rf /var/cache/pacman/pkg/*
