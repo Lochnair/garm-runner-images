@@ -8,7 +8,7 @@ The image is intentionally treated as a generated artifact rather than a long-li
 - The build starts from Ubuntu Resolute and runs a full package upgrade before installing the runner toolchain.
 - Packages that were previously installed by GARM/cloud-init are baked into the image.
 - GARM can therefore use `disable_updates: true` and avoid doing an `apt upgrade` plus a large package install for every ephemeral runner.
-- The rolling release asset always has the same URL, so TheBeast can pull it without GitHub credentials.
+- Each successful non-PR build is published as its own GitHub release. The `latest` release URL remains stable for TheBeast.
 
 ## Image contents
 
@@ -18,18 +18,20 @@ The image includes cloud-init and is built as an Incus **container** image. Nest
 
 ## Published image
 
-Successful non-PR builds replace these assets on the rolling `runner-image` release:
+Pull requests build and upload the image as a short-lived Actions artifact, but do not publish a release.
+
+Successful non-PR builds first create a **draft** release and upload both files:
 
 - `garm-runner-incus.tar.xz`
 - `garm-runner-incus.tar.xz.sha256`
 
+Only after both uploads succeed is the release published and marked as the latest release. That keeps the stable download URL on the previous known-good pair if a build or upload fails.
+
 The stable download URL is:
 
 ```text
-https://github.com/Lochnair/garm-runner-images/releases/download/runner-image/garm-runner-incus.tar.xz
+https://github.com/Lochnair/garm-runner-images/releases/latest/download/garm-runner-incus.tar.xz
 ```
-
-Pull requests still build and upload the image as a short-lived Actions artifact, but do not touch the rolling release.
 
 ## Install the updater on TheBeast
 
