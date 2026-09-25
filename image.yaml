@@ -1,0 +1,161 @@
+image:
+  name: garm-runner-{{ image.release }}-{{ image.architecture }}-{{ image.serial }}
+  distribution: ubuntu
+  release: resolute
+  description: GARM runner image based on Ubuntu {{ image.release }}
+  architecture: x86_64
+  variant: cloud
+
+source:
+  downloader: debootstrap
+  same_as: gutsy
+  url: https://archive.ubuntu.com/ubuntu
+  components:
+    - main
+    - restricted
+    - universe
+    - multiverse
+
+files:
+  - path: /etc/hostname
+    generator: hostname
+
+  - path: /etc/hosts
+    generator: hosts
+
+  - path: /etc/machine-id
+    generator: dump
+
+  - path: /var/lib/dbus/machine-id
+    generator: remove
+
+  - path: /etc/netplan/10-incus.yaml
+    generator: dump
+    content: |-
+      network:
+        version: 2
+        ethernets:
+          eth0:
+            dhcp4: true
+            dhcp-identifier: mac
+
+  - name: meta-data
+    generator: cloud-init
+    variants:
+      - cloud
+
+  - name: network-config
+    generator: cloud-init
+    variants:
+      - cloud
+
+  - name: user-data
+    generator: cloud-init
+    variants:
+      - cloud
+
+  - name: vendor-data
+    generator: cloud-init
+    variants:
+      - cloud
+
+packages:
+  manager: apt
+  update: true
+  cleanup: true
+
+  sets:
+    - action: install
+      packages:
+        - cloud-init
+        - netplan.io
+        - systemd
+        - systemd-sysv
+        - dbus
+        - sudo
+        - locales
+        - curl
+        - tar
+        - build-essential
+        - cmake
+        - ninja-build
+        - pkg-config
+        - autoconf
+        - automake
+        - libtool
+        - m4
+        - bison
+        - flex
+        - clang
+        - clang-tools
+        - lld
+        - llvm
+        - llvm-dev
+        - libclang-dev
+        - git
+        - git-lfs
+        - openssh-client
+        - wget
+        - aria2
+        - jq
+        - file
+        - rsync
+        - unzip
+        - zip
+        - xz-utils
+        - zstd
+        - bzip2
+        - ca-certificates
+        - gnupg
+        - python3
+        - python3-pip
+        - python3-venv
+        - pipx
+        - nodejs
+        - npm
+        - golang-go
+        - rustc
+        - cargo
+        - docker.io
+        - docker-buildx
+        - docker-compose-v2
+        - shellcheck
+        - libssl-dev
+        - libffi-dev
+        - zlib1g-dev
+        - libbz2-dev
+        - liblzma-dev
+        - libsqlite3-dev
+        - kmod
+        - iproute2
+        - iputils-ping
+        - dnsutils
+        - netcat-openbsd
+        - socat
+        - ethtool
+        - tcpdump
+        - nftables
+
+  repositories:
+    - name: sources.list
+      url: |-
+        deb https://archive.ubuntu.com/ubuntu {{ image.release }} main restricted universe multiverse
+        deb https://archive.ubuntu.com/ubuntu {{ image.release }}-updates main restricted universe multiverse
+        deb https://security.ubuntu.com/ubuntu {{ image.release }}-security main restricted universe multiverse
+      architectures:
+        - amd64
+
+actions:
+  - trigger: post-packages
+    action: |-
+      #!/bin/sh
+      set -eu
+
+      locale-gen en_US.UTF-8
+      update-locale LANG=en_US.UTF-8
+
+      systemctl enable systemd-networkd.service
+      systemctl enable docker.service
+
+      cloud-init clean --logs --machine-id
+      rm -rf /var/lib/apt/lists/*
