@@ -42,11 +42,15 @@ jobs:
           set -euxo pipefail
           mkdir -p build dist
           sudo /snap/bin/distrobuilder build-incus image.yaml build --type=unified --compression=xz
+
           image="$(find build -maxdepth 1 -type f -name '*.tar.xz' -print -quit)"
           test -n "$image"
+
           cp "$image" dist/garm-runner-incus.tar.xz
-          cd dist
-          sha256sum garm-runner-incus.tar.xz > garm-runner-incus.tar.xz.sha256
+          (
+            cd dist
+            sha256sum garm-runner-incus.tar.xz > garm-runner-incus.tar.xz.sha256
+          )
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -56,13 +60,21 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Publish rolling image
+      - name: Publish image release
         if: ${{ github.event_name != 'pull_request' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          if ! gh release view runner-image >/dev/null 2>&1; then
-            gh release create runner-image --target "$GITHUB_SHA" --title "GARM runner image" --notes "Rolling Incus container image built from image.yaml."
-          fi
-          gh release upload runner-image dist/garm-runner-incus.tar.xz dist/garm-runner-incus.tar.xz.sha256 --clobber
+
+          tag="runner-image-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          gh release create "$tag" \
+            dist/garm-runner-incus.tar.xz \
+            dist/garm-runner-incus.tar.xz.sha256 \
+            --target "$GITHUB_SHA" \
+            --title "GARM runner image $(date -u '+%Y-%m-%d')" \
+            --notes "Incus container image built from commit $GITHUB_SHA." \
+            --draft
+
+          gh release edit "$tag" --draft=false --latest
