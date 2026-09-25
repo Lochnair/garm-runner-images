@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh GARM Incus runner image
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/update-garm-runner-image
