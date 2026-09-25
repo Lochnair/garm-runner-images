@@ -1,0 +1,131 @@
+image:
+  name: garm-runner-ubuntu-24.04-{{ image.architecture }}-{{ image.serial }}
+  distribution: ubuntu
+  release: noble
+  description: GARM runner image based on Ubuntu ubuntu-24.04
+  architecture: x86_64
+  variant: default
+
+source:
+  downloader: ubuntu-http
+  url: https://cdimage.ubuntu.com/ubuntu-base
+
+files:
+  - path: /etc/hostname
+    generator: hostname
+  - path: /etc/hosts
+    generator: hosts
+  - path: /etc/machine-id
+    generator: dump
+    content: uninitialized
+  - path: /var/lib/dbus/machine-id
+    generator: remove
+  - path: /etc/netplan/10-incus.yaml
+    generator: dump
+    mode: 0600
+    content: |-
+      network:
+        version: 2
+        ethernets:
+          eth0:
+            dhcp4: true
+            dhcp-identifier: mac
+  - name: meta-data
+    generator: cloud-init
+  - name: network-config
+    generator: cloud-init
+  - name: user-data
+    generator: cloud-init
+  - name: vendor-data
+    generator: cloud-init
+
+packages:
+  manager: apt
+  update: true
+  cleanup: true
+  sets:
+    - action: install
+      packages:
+        - cloud-init
+        - netplan.io
+        - systemd
+        - systemd-sysv
+        - dbus
+        - sudo
+        - locales
+        - curl
+        - tar
+        - build-essential
+        - cmake
+        - ninja-build
+        - pkg-config
+        - autoconf
+        - automake
+        - libtool
+        - m4
+        - bison
+        - flex
+        - clang
+        - clang-tools
+        - lld
+        - llvm
+        - llvm-dev
+        - libclang-dev
+        - git
+        - git-lfs
+        - openssh-client
+        - wget
+        - aria2
+        - jq
+        - file
+        - rsync
+        - unzip
+        - zip
+        - xz-utils
+        - zstd
+        - bzip2
+        - ca-certificates
+        - gnupg
+        - python3
+        - python3-pip
+        - python3-venv
+        - pipx
+        - nodejs
+        - npm
+        - golang-go
+        - rustc
+        - cargo
+        - docker.io
+        - docker-buildx
+        - docker-compose-v2
+        - shellcheck
+        - libssl-dev
+        - libffi-dev
+        - zlib1g-dev
+        - libbz2-dev
+        - liblzma-dev
+        - libsqlite3-dev
+        - kmod
+        - iproute2
+        - iputils-ping
+        - dnsutils
+        - netcat-openbsd
+        - socat
+        - ethtool
+        - tcpdump
+        - nftables
+
+actions:
+  - trigger: post-packages
+    action: |-
+      #!/bin/sh
+      set -eu
+      locale-gen en_US.UTF-8
+      update-locale LANG=en_US.UTF-8
+      systemctl enable systemd-networkd.service
+      systemctl enable docker.service
+      cloud-init clean --logs --machine-id
+      rm -rf /var/lib/apt/lists/*
+
+mappings:
+  architecture_map: debian
