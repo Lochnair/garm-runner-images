@@ -4,7 +4,7 @@ image:
   release: resolute
   description: GARM runner image based on Ubuntu {{ image.release }}
   architecture: x86_64
-  variant: cloud
+  variant: default
 
 source:
   downloader: ubuntu-http
@@ -35,23 +35,15 @@ files:
 
   - name: meta-data
     generator: cloud-init
-    variants:
-      - cloud
 
   - name: network-config
     generator: cloud-init
-    variants:
-      - cloud
 
   - name: user-data
     generator: cloud-init
-    variants:
-      - cloud
 
   - name: vendor-data
     generator: cloud-init
-    variants:
-      - cloud
 
 packages:
   manager: apt
