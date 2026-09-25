@@ -187,7 +187,28 @@ update_image() {
 
 failures=0
 
-while IFS=\t' read -r image_id asset checksum alias; do
+while IFS=
+  [[ -z "$image_id" ]] && continue
+
+  set +e
+  (
+    set -e
+    update_image "$image_id" "$asset" "$checksum" "$alias"
+  )
+  status=$?
+  set -e
+
+  if (( status != 0 )); then
+    echo "Failed to update $image_id" >&2
+    failures=$((failures + 1))
+  fi
+done <<< "$manifest_rows"
+
+if (( failures != 0 )); then
+  echo "$failures image update(s) failed" >&2
+  exit 1
+fi
+\t' read -r image_id asset checksum alias; do
   [[ -z "$image_id" ]] && continue
 
   set +e
