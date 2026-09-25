@@ -33,10 +33,13 @@ fi
 
 curl -fL --retry 5 --retry-delay 2 "$IMAGE_URL" -o "$image_file"
 
-(
-  cd "$tmpdir"
-  sha256sum -c "$(basename "$checksum_file")"
-)
+actual_sha="$(sha256sum "$image_file" | awk '{print $1}')"
+if [[ "${actual_sha,,}" != "${remote_sha,,}" ]]; then
+  echo "Checksum mismatch for $IMAGE_URL" >&2
+  echo "Expected: $remote_sha" >&2
+  echo "Actual:   $actual_sha" >&2
+  exit 1
+fi
 
 alias_fingerprint() {
   local alias="$1"
@@ -88,13 +91,20 @@ fi
 
 incus image alias delete --project "$PROJECT" "$STAGING_ALIAS"
 
-printf '%s\n' "$remote_sha" > "$state_file.tmp"
-mv "$state_file.tmp" "$state_file"
-
 # Re-read the final alias targets after any rotation. These are the only two
 # managed images that should survive pruning.
 current_fingerprint="$(alias_fingerprint "$CURRENT_ALIAS")"
 previous_fingerprint="$(alias_fingerprint "$PREVIOUS_ALIAS")"
+
+# Capture the list before iterating so an Incus failure propagates through
+# set -e instead of being hidden by process substitution.
+managed_images="$(
+  incus image list \
+    --project "$PROJECT" \
+    user.garm-runner=true \
+    --format csv,noheader \
+    --columns f
+)"
 
 while IFS= read -r fingerprint; do
   [[ -z "$fingerprint" ]] && continue
@@ -102,13 +112,12 @@ while IFS= read -r fingerprint; do
   [[ -n "$previous_fingerprint" && "$fingerprint" == "$previous_fingerprint" ]] && continue
 
   incus image delete --project "$PROJECT" "$fingerprint"
-done < <(
-  incus image list \
-    --project "$PROJECT" \
-    user.garm-runner=true \
-    --format csv,noheader \
-    --columns f
-)
+done <<< "$managed_images"
+
+# Only mark this release complete after import, alias rotation, and pruning all
+# succeeded. A failed cleanup will therefore be retried on the next timer run.
+printf '%s\n' "$remote_sha" > "$state_file.tmp"
+mv "$state_file.tmp" "$state_file"
 
 echo "GARM runner image now points to $current_fingerprint"
 if [[ -n "$previous_fingerprint" ]]; then
