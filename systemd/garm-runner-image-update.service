@@ -1,9 +1,9 @@
 [Unit]
-Description=Refresh GARM Incus runner image
+Description=Refresh GARM Incus runner images
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=oneshot
-TimeoutStartSec=30min
-ExecStart=/usr/local/sbin/update-garm-runner-image
+TimeoutStartSec=60min
+ExecStart=/usr/local/sbin/update-garm-runner-images
