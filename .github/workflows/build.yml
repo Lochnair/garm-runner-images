@@ -1,0 +1,87 @@
+name: Build runner image
+
+on:
+  pull_request:
+    paths:
+      - image.yaml
+      - scripts/**
+      - systemd/**
+      - .github/workflows/build.yml
+  push:
+    branches:
+      - main
+    paths:
+      - image.yaml
+      - scripts/**
+      - systemd/**
+      - .github/workflows/build.yml
+  schedule:
+    - cron: "17 3 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: garm-runner-image
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Incus image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate updater script
+        run: bash -n scripts/update-incus-image.sh
+
+      - name: Install distrobuilder
+        run: |
+          sudo snap install distrobuilder --classic
+          /snap/bin/distrobuilder --version
+
+      - name: Build Incus runner image
+        run: |
+          set -euxo pipefail
+          mkdir -p build dist
+          sudo /snap/bin/distrobuilder build-incus image.yaml build --type=unified --compression=xz
+
+          image="$(find build -maxdepth 1 -type f -name '*.tar.xz' -print -quit)"
+          test -n "$image"
+
+          cp "$image" dist/garm-runner-incus.tar.xz
+          (
+            cd dist
+            sha256sum garm-runner-incus.tar.xz > garm-runner-incus.tar.xz.sha256
+          )
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: garm-runner-incus
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish image release
+        if: ${{ github.event_name != 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+
+          tag="runner-image-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          gh release create "$tag" \
+            dist/garm-runner-incus.tar.xz \
+            dist/garm-runner-incus.tar.xz.sha256 \
+            --target "$GITHUB_SHA" \
+            --title "GARM runner image $(date -u '+%Y-%m-%d')" \
+            --notes "Incus container image built from commit $GITHUB_SHA." \
+            --draft
+
+          gh release edit "$tag" --draft=false --latest

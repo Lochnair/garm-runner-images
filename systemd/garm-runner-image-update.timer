@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodically refresh GARM Incus runner image
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
