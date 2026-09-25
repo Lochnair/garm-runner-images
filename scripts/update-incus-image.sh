@@ -5,7 +5,7 @@ PROJECT="${INCUS_PROJECT:-garm-runners}"
 CURRENT_ALIAS="${CURRENT_ALIAS:-garm-runner-current}"
 PREVIOUS_ALIAS="${PREVIOUS_ALIAS:-garm-runner-previous}"
 STAGING_ALIAS="${STAGING_ALIAS:-garm-runner-staging}"
-IMAGE_URL="${IMAGE_URL:-https://github.com/Lochnair/garm-runner-images/releases/download/runner-image/garm-runner-incus.tar.xz}"
+IMAGE_URL="${IMAGE_URL:-https://github.com/Lochnair/garm-runner-images/releases/latest/download/garm-runner-incus.tar.xz}"
 CHECKSUM_URL="${CHECKSUM_URL:-${IMAGE_URL}.sha256}"
 STATE_DIR="${STATE_DIR:-/var/lib/garm-runner-image}"
 
@@ -40,7 +40,11 @@ curl -fL --retry 5 --retry-delay 2 "$IMAGE_URL" -o "$image_file"
 
 alias_fingerprint() {
   local alias="$1"
-  incus image alias list     --project "$PROJECT"     --format csv,noheader     --columns af |
+
+  incus image alias list \
+    --project "$PROJECT" \
+    --format csv,noheader \
+    --columns af |
     awk -F, -v alias="$alias" '$1 == alias { print $2; exit }'
 }
 
@@ -48,7 +52,12 @@ if [[ -n "$(alias_fingerprint "$STAGING_ALIAS")" ]]; then
   incus image alias delete --project "$PROJECT" "$STAGING_ALIAS"
 fi
 
-incus image import   --project "$PROJECT"   "$image_file"   --alias "$STAGING_ALIAS"   user.garm-runner=true   source.url="$IMAGE_URL"
+incus image import \
+  --project "$PROJECT" \
+  --alias "$STAGING_ALIAS" \
+  "$image_file" \
+  user.garm-runner=true \
+  source.url="$IMAGE_URL"
 
 new_fingerprint="$(alias_fingerprint "$STAGING_ALIAS")"
 if [[ -z "$new_fingerprint" ]]; then
@@ -82,20 +91,26 @@ incus image alias delete --project "$PROJECT" "$STAGING_ALIAS"
 printf '%s\n' "$remote_sha" > "$state_file.tmp"
 mv "$state_file.tmp" "$state_file"
 
-if command -v jq >/dev/null 2>&1; then
-  while IFS= read -r fingerprint; do
-    [[ -z "$fingerprint" ]] && continue
-    [[ "$fingerprint" == "$new_fingerprint" ]] && continue
-    [[ -n "$current_fingerprint" && "$fingerprint" == "$current_fingerprint" ]] && continue
+# Re-read the final alias targets after any rotation. These are the only two
+# managed images that should survive pruning.
+current_fingerprint="$(alias_fingerprint "$CURRENT_ALIAS")"
+previous_fingerprint="$(alias_fingerprint "$PREVIOUS_ALIAS")"
 
-    incus image delete --project "$PROJECT" "$fingerprint"
-  done < <(
-    incus image list --project "$PROJECT" --format json |
-      jq -r '.[] | select(.properties["user.garm-runner"] == "true") | .fingerprint'
-  )
-fi
+while IFS= read -r fingerprint; do
+  [[ -z "$fingerprint" ]] && continue
+  [[ "$fingerprint" == "$current_fingerprint" ]] && continue
+  [[ -n "$previous_fingerprint" && "$fingerprint" == "$previous_fingerprint" ]] && continue
 
-echo "GARM runner image now points to $new_fingerprint"
-if [[ -n "$current_fingerprint" && "$current_fingerprint" != "$new_fingerprint" ]]; then
-  echo "Rollback alias $PREVIOUS_ALIAS points to $current_fingerprint"
+  incus image delete --project "$PROJECT" "$fingerprint"
+done < <(
+  incus image list \
+    --project "$PROJECT" \
+    user.garm-runner=true \
+    --format csv,noheader \
+    --columns f
+)
+
+echo "GARM runner image now points to $current_fingerprint"
+if [[ -n "$previous_fingerprint" ]]; then
+  echo "Rollback alias $PREVIOUS_ALIAS points to $previous_fingerprint"
 fi
