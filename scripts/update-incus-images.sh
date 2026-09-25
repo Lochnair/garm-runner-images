@@ -93,7 +93,11 @@ update_image() {
     local state_sha=""
     local state_alias=""
     local state_project=""
-    IFS=
+    local state_sep
+    state_sep="$(printf '\t')"
+    IFS="$state_sep" read -r state_sha state_alias state_project < "$state_file" || true
+
+    if [[ "$state_sha" == "$remote_sha" && "$state_alias" == "$current_alias" && "$state_project" == "$PROJECT" ]]; then
       echo "$image_id is already current ($remote_sha)"
       return
     fi
