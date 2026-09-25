@@ -20,6 +20,7 @@ manifest_rows="$(
 import json
 import re
 import sys
+from pathlib import Path
 
 with open(sys.argv[1], "r", encoding="utf-8") as handle:
     manifest = json.load(handle)
@@ -31,9 +32,10 @@ images = manifest.get("images")
 if not isinstance(images, list) or not images:
     raise SystemExit("manifest contains no images")
 
+safe_name = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 seen_ids = set()
 seen_assets = set()
-seen_aliases = set()
+reserved_aliases = set()
 
 for image in images:
     image_id = image.get("id")
@@ -43,16 +45,24 @@ for image in images:
 
     if not all(isinstance(value, str) and value for value in (image_id, asset, checksum, alias)):
         raise SystemExit("manifest contains an invalid image entry")
+    if not safe_name.fullmatch(image_id):
+        raise SystemExit(f"unsafe image id: {image_id!r}")
+    if not safe_name.fullmatch(asset) or Path(asset).name != asset or not asset.endswith(".tar.xz"):
+        raise SystemExit(f"unsafe image asset: {asset!r}")
+    if not safe_name.fullmatch(alias):
+        raise SystemExit(f"unsafe image alias: {alias!r}")
     if not re.fullmatch(r"[0-9a-fA-F]{64}", checksum):
         raise SystemExit(f"invalid checksum for {image_id}")
-    if any(char in value for value in (image_id, asset, alias) for char in "\t\n\r"):
-        raise SystemExit("manifest fields may not contain tabs or newlines")
-    if image_id in seen_ids or asset in seen_assets or alias in seen_aliases:
-        raise SystemExit("manifest contains duplicate ids, assets, or aliases")
+    if image_id in seen_ids or asset in seen_assets:
+        raise SystemExit("manifest contains duplicate ids or assets")
+
+    aliases = (alias, f"{alias}-previous", f"{alias}-staging")
+    if any(candidate in reserved_aliases for candidate in aliases):
+        raise SystemExit(f"manifest alias namespace collision for {alias}")
 
     seen_ids.add(image_id)
     seen_assets.add(asset)
-    seen_aliases.add(alias)
+    reserved_aliases.update(aliases)
 
     print("\t".join((image_id, asset, checksum.lower(), alias)))
 PY
@@ -79,9 +89,15 @@ update_image() {
   local image_file="$tmpdir/$asset"
   local image_url="$RELEASE_BASE_URL/$asset"
 
-  if [[ -f "$state_file" ]] && [[ "$(cat "$state_file")" == "$remote_sha" ]]; then
-    echo "$image_id is already current ($remote_sha)"
-    return
+  if [[ -f "$state_file" ]]; then
+    local state_sha=""
+    local state_alias=""
+    IFS=$'\t' read -r state_sha state_alias < "$state_file" || true
+
+    if [[ "$state_sha" == "$remote_sha" && "$state_alias" == "$current_alias" ]]; then
+      echo "$image_id is already current ($remote_sha)"
+      return
+    fi
   fi
 
   curl -fL --retry 5 --retry-delay 2 "$image_url" -o "$image_file"
@@ -160,7 +176,7 @@ update_image() {
     incus image delete --project "$PROJECT" "$fingerprint"
   done <<< "$managed_images"
 
-  printf '%s\n' "$remote_sha" > "$state_file.tmp"
+  printf '%s\t%s\n' "$remote_sha" "$current_alias" > "$state_file.tmp"
   mv "$state_file.tmp" "$state_file"
 
   echo "$image_id now points to $current_fingerprint"
