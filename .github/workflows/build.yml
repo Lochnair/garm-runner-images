@@ -1,9 +1,9 @@
-name: Build runner image
+name: Build runner images
 
 on:
   pull_request:
     paths:
-      - image.yaml
+      - images/**
       - scripts/**
       - systemd/**
       - .github/workflows/build.yml
@@ -11,7 +11,7 @@ on:
     branches:
       - main
     paths:
-      - image.yaml
+      - images/**
       - scripts/**
       - systemd/**
       - .github/workflows/build.yml
@@ -23,21 +23,60 @@ permissions:
   contents: write
 
 concurrency:
-  group: garm-runner-image
+  group: garm-runner-images
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build Incus image
+  prepare:
+    name: Prepare image matrix
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    outputs:
+      matrix: ${{ steps.catalog.outputs.matrix }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
       - name: Validate updater script
-        run: bash -n scripts/update-incus-image.sh
+        run: bash -n scripts/update-incus-images.sh
+
+      - name: Validate image catalog
+        id: catalog
+        run: |
+          set -euo pipefail
+
+          jq -e '
+            .schema_version == 1 and
+            (.images | type == "array" and length > 0) and
+            ([.images[].id] | length == (unique | length)) and
+            ([.images[].asset] | length == (unique | length)) and
+            ([.images[].alias] | length == (unique | length)) and
+            all(.images[];
+              (.id | type == "string" and length > 0) and
+              (.definition | type == "string" and length > 0) and
+              (.asset | type == "string" and endswith(".tar.xz")) and
+              (.alias | type == "string" and length > 0)
+            )
+          ' images/catalog.json >/dev/null
+
+          while IFS= read -r definition; do
+            test -f "$definition"
+          done < <(jq -r '.images[].definition' images/catalog.json)
+
+          echo "matrix=$(jq -c '{include: .images}' images/catalog.json)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.id }}
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
 
       - name: Install distrobuilder
         run: |
@@ -45,43 +84,102 @@ jobs:
           /snap/bin/distrobuilder --version
 
       - name: Build Incus runner image
+        env:
+          IMAGE_ID: ${{ matrix.id }}
+          DEFINITION: ${{ matrix.definition }}
+          ASSET: ${{ matrix.asset }}
         run: |
           set -euxo pipefail
-          mkdir -p build dist
-          sudo /snap/bin/distrobuilder build-incus image.yaml build --type=unified --compression=xz
 
-          image="$(find build -maxdepth 1 -type f -name '*.tar.xz' -print -quit)"
+          build_dir="build-${IMAGE_ID}"
+          mkdir -p "$build_dir" dist
+
+          sudo /snap/bin/distrobuilder build-incus "$DEFINITION" "$build_dir" --type=unified --compression=xz
+
+          image="$(find "$build_dir" -maxdepth 1 -type f -name '*.tar.xz' -print -quit)"
           test -n "$image"
 
-          cp "$image" dist/garm-runner-incus.tar.xz
+          cp "$image" "dist/$ASSET"
           (
             cd dist
-            sha256sum garm-runner-incus.tar.xz > garm-runner-incus.tar.xz.sha256
+            sha256sum "$ASSET" > "$ASSET.sha256"
           )
 
-      - name: Upload build artifact
+      - name: Upload image artifact
         uses: actions/upload-artifact@v4
         with:
-          name: garm-runner-incus
+          name: image-${{ matrix.id }}
           path: dist/
           if-no-files-found: error
           retention-days: 7
 
+  publish:
+    name: Publish image set
+    if: ${{ github.event_name != 'pull_request' }}
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download image artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: image-*
+          path: dist
+          merge-multiple: true
+
+      - name: Build release manifest
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          catalog = json.loads(Path("images/catalog.json").read_text())
+          images = []
+
+          for image in catalog["images"]:
+              checksum_path = Path("dist") / f'{image["asset"]}.sha256'
+              checksum = checksum_path.read_text().split()[0]
+              if len(checksum) != 64:
+                  raise SystemExit(f"invalid checksum for {image['id']}")
+
+              images.append({
+                  "id": image["id"],
+                  "asset": image["asset"],
+                  "sha256": checksum,
+                  "alias": image["alias"],
+              })
+
+          manifest = {
+              "schema_version": 1,
+              "source_commit": os.environ["SOURCE_COMMIT"],
+              "images": images,
+          }
+
+          Path("dist/manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+          )
+          PY
+
+          cat dist/manifest.json
+
       - name: Publish image release
-        if: ${{ github.event_name != 'pull_request' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
 
-          tag="runner-image-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          tag="runner-images-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
-          gh release create "$tag" \
-            dist/garm-runner-incus.tar.xz \
-            dist/garm-runner-incus.tar.xz.sha256 \
-            --target "$GITHUB_SHA" \
-            --title "GARM runner image $(date -u '+%Y-%m-%d')" \
-            --notes "Incus container image built from commit $GITHUB_SHA." \
-            --draft
+          gh release create "$tag"             dist/*             --target "$GITHUB_SHA"             --title "GARM runner images $(date -u '+%Y-%m-%d')"             --notes "Incus runner image set built from commit $GITHUB_SHA."             --draft
 
           gh release edit "$tag" --draft=false --latest
